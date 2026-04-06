@@ -1,0 +1,15 @@
+[package]
+name = "zr-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+globwalk.workspace = true
+serde_json.workspace = true
+zr-core = { path = "../zr-core", features = [] }
+
+[[bin]]
+name = "zombie-resurrection"
+path = "src/main.rs"

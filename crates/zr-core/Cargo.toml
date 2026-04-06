@@ -1,0 +1,21 @@
+[package]
+name = "zr-core"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+tch = ["dep:tch"]
+
+[dependencies]
+anyhow.workspace = true
+loguna.workspace = true
+prost.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+rkyv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tch = { workspace = true, optional = true }
+thiserror.workspace = true
+zstd.workspace = true

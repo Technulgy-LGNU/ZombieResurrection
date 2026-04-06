@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(135deg, #0a0e1a 0%, #0f172a 50%, #0a0e1a 100%);
+  color: #e2e8f0;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+.bg-dot-pattern {
+  background-image: radial-gradient(circle, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.glass-panel {
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(148, 163, 184, 0.05);
+}
+
+.panel-accent {
+  position: relative;
+}
+
+.panel-accent::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #06b6d4 30%, #22d3ee 50%, #06b6d4 70%, transparent);
+  border-radius: 0 0 2px 2px;
+  opacity: 0.8;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.6);
+  border-radius: 999px;
+}
+
+.hover-lift {
+  transition: all 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.3), 0 0 10px rgba(6, 182, 212, 0.05);
+}
+
+.btn-glow {
+  background: linear-gradient(135deg, #0891b2, #06b6d4, #22d3ee);
+  box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3), 0 0 20px rgba(6, 182, 212, 0.1);
+  transition: all 0.2s ease;
+}
+
+.btn-glow:hover {
+  box-shadow: 0 6px 20px rgba(6, 182, 212, 0.5), 0 0 30px rgba(6, 182, 212, 0.2);
+  transform: translateY(-1px);
+}
