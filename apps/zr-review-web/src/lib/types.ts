@@ -52,6 +52,13 @@ export interface ReviewSequenceSummary {
   frame_count: number;
   quality_score: number;
   sequence_kind: string;
+  warnings: string[];
+}
+
+export interface ReviewSequenceListItem {
+  summary: ReviewSequenceSummary;
+  verdict: ReviewVerdict;
+  note: string;
 }
 
 export interface ReviewSequencePayload {
@@ -71,5 +78,11 @@ export interface ReviewGamePayload {
   target_color: "Yellow" | "Blue";
   phase: string;
   audit_notes: string[];
-  sequences: ReviewSequencePayload[];
+  sequences: ReviewSequenceListItem[];
+}
+
+export interface ReviewSequenceQueryPayload {
+  game_id: string;
+  source_log: string;
+  sequence: ReviewSequencePayload;
 }

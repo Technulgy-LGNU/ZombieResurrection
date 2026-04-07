@@ -1,4 +1,4 @@
-import type { GameListItem, ReviewGamePayload, ReviewVerdict } from "./types";
+import type { GameListItem, ReviewGamePayload, ReviewSequenceQueryPayload, ReviewVerdict } from "./types";
 
 export async function fetchGames(): Promise<GameListItem[]> {
   const response = await fetch("/api/games");
@@ -9,6 +9,13 @@ export async function fetchGames(): Promise<GameListItem[]> {
 export async function fetchGame(path: string): Promise<ReviewGamePayload> {
   const params = new URLSearchParams({ path });
   const response = await fetch(`/api/game?${params.toString()}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function fetchSequence(path: string, sequenceIndex: number): Promise<ReviewSequenceQueryPayload> {
+  const params = new URLSearchParams({ path, sequence_index: String(sequenceIndex) });
+  const response = await fetch(`/api/sequence?${params.toString()}`);
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
