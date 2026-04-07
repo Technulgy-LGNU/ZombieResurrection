@@ -1,18 +1,23 @@
 [package]
-name = "zr-review-api"
+name = "zr-review"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+include_dir.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
+tower = "0.5.2"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["fmt"] }
 zr-core = { path = "../zr-core" }
 
 [[bin]]
-name = "zr-review-api"
+name = "zr-review"
 path = "src/main.rs"
