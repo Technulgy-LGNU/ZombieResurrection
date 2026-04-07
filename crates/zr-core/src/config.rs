@@ -123,6 +123,7 @@ pub struct PipelineConfig {
     pub live_play: LivePlayConfig,
     pub occupancy_grid_width: usize,
     pub occupancy_grid_height: usize,
+    pub auto_clean: AutoCleanConfig,
 }
 
 impl PipelineConfig {
@@ -131,6 +132,37 @@ impl PipelineConfig {
         let robot_count = (self.max_team_size - 1) + self.max_team_size;
         let per_timestep = 8 + 10 + 4 + 7 + robot_count * per_robot;
         per_timestep * self.window.length
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoCleanConfig {
+    pub min_visibility: f32,
+    pub min_visible_target_robots: usize,
+    pub min_visible_opponent_robots: usize,
+    pub min_quality_score: f32,
+    pub teleport_threshold_m: f32,
+    pub enable_position_smoothing: bool,
+    pub smoothing_window: usize,
+    pub drop_duplicate_timestamps: bool,
+    pub velocity_spike_threshold_m_s: f32,
+    pub min_ball_visibility: f32,
+}
+
+impl Default for AutoCleanConfig {
+    fn default() -> Self {
+        Self {
+            min_visibility: 0.5,
+            min_visible_target_robots: 3,
+            min_visible_opponent_robots: 2,
+            min_quality_score: 0.55,
+            teleport_threshold_m: 0.5,
+            enable_position_smoothing: true,
+            smoothing_window: 3,
+            drop_duplicate_timestamps: true,
+            velocity_spike_threshold_m_s: 6.0,
+            min_ball_visibility: 0.3,
+        }
     }
 }
 
@@ -159,6 +191,7 @@ impl Default for PipelineConfig {
             live_play: LivePlayConfig::default(),
             occupancy_grid_width: 40,
             occupancy_grid_height: 28,
+            auto_clean: AutoCleanConfig::default(),
         }
     }
 }

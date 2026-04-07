@@ -227,6 +227,7 @@ pub struct ReviewSequenceSummary {
     pub frame_count: usize,
     pub quality_score: f32,
     pub sequence_kind: SequenceKind,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]

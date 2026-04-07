@@ -7,7 +7,7 @@ use rand::rng;
 use rand_distr::{Distribution, Normal};
 
 use crate::archive::{NormalizationStats, SplitAssignment, SplitBundle};
-use crate::config::PipelineConfig;
+use crate::config::{AutoCleanConfig, PipelineConfig};
 use crate::raw::{load_raw_game, RawGame};
 use crate::review::{ReviewStore, ReviewVerdict};
 use crate::types::{
@@ -50,7 +50,7 @@ pub fn preprocess_log(
     review: Option<&ReviewStore>,
 ) -> Result<PipelineOutput> {
     let raw = load_raw_game(path, config)?;
-    Ok(run_pipeline(raw, config, review, None))
+    Ok(run_pipeline(raw, config, review, None, true))
 }
 
 pub fn preprocess_log_with_raw(
@@ -60,7 +60,17 @@ pub fn preprocess_log_with_raw(
 ) -> Result<(PipelineOutput, Vec<CleanFrame>)> {
     let raw = load_raw_game(path, config)?;
     let raw_frames = raw.frames.clone();
-    let output = run_pipeline(raw, config, review, None);
+    let output = run_pipeline(raw, config, review, None, true);
+    Ok((output, raw_frames))
+}
+
+pub fn preprocess_review_log(
+    path: &Path,
+    config: &PipelineConfig,
+) -> Result<(PipelineOutput, Vec<CleanFrame>)> {
+    let raw = load_raw_game(path, config)?;
+    let raw_frames = raw.frames.clone();
+    let output = run_pipeline(raw, config, None, None, false);
     Ok((output, raw_frames))
 }
 
@@ -79,7 +89,7 @@ pub fn preprocess_logs_with_splits(
             .find(|entry| entry.game_id == raw.metadata.game_id)
             .map(|entry| entry.split.clone())
             .unwrap_or_else(|| "train".to_string());
-        let output = run_pipeline(raw, config, review, Some(split.clone()));
+        let output = run_pipeline(raw, config, review, Some(split.clone()), true);
         if split == "train" {
             train_samples.extend(output.samples.iter().cloned());
         }
@@ -97,11 +107,143 @@ pub fn preprocess_logs_with_splits(
     (outputs, split_bundle)
 }
 
+/// Fully-automated pipeline: raw logs → training data with no human review.
+/// Applies all standard cleaning steps plus the extra automated quality passes
+/// controlled by [`AutoCleanConfig`].
+pub fn auto_preprocess_log(path: &Path, config: &PipelineConfig) -> Result<PipelineOutput> {
+    let raw = load_raw_game(path, config)?;
+    Ok(run_auto_pipeline(raw, config, None, true))
+}
+
+pub fn auto_preprocess_logs_with_splits(
+    raws: Vec<RawGame>,
+    config: &PipelineConfig,
+) -> (Vec<PipelineOutput>, SplitBundle) {
+    let assignments = assign_splits(&raws, config);
+    let mut outputs = Vec::with_capacity(raws.len());
+    let mut train_samples = Vec::new();
+
+    for raw in raws {
+        let split = assignments
+            .iter()
+            .find(|entry| entry.game_id == raw.metadata.game_id)
+            .map(|entry| entry.split.clone())
+            .unwrap_or_else(|| "train".to_string());
+        let output = run_auto_pipeline(raw, config, Some(split.clone()), true);
+        if split == "train" {
+            train_samples.extend(output.samples.iter().cloned());
+        }
+        outputs.push(output);
+    }
+
+    let normalization = compute_normalization_stats(&train_samples);
+    let elimination_weight = config.split.elimination_weight;
+    let split_bundle = SplitBundle {
+        assignments,
+        normalization,
+        elimination_sample_weight: elimination_weight,
+    };
+    apply_split_weights(&mut outputs, &split_bundle);
+    (outputs, split_bundle)
+}
+
+fn run_auto_pipeline(
+    raw: RawGame,
+    config: &PipelineConfig,
+    split: Option<String>,
+    build_training_samples: bool,
+) -> PipelineOutput {
+    let auto = &config.auto_clean;
+
+    // Standard passes
+    let frames = resample_frames(raw.frames, config);
+    let frames = filter_live_frames(frames, config);
+    let frames = canonicalize_attack_direction(frames);
+
+    // --- Enhanced automated cleaning passes ---
+    let frames = if auto.drop_duplicate_timestamps {
+        drop_duplicate_timestamps(frames)
+    } else {
+        frames
+    };
+    let frames = filter_low_visibility(frames, auto);
+    let frames = filter_incomplete_teams(frames, auto);
+    let frames = detect_and_remove_teleports(frames, auto, config);
+    let frames = remove_velocity_spikes(frames, auto);
+    let frames = if auto.enable_position_smoothing {
+        smooth_positions(frames, auto)
+    } else {
+        frames
+    };
+    let frames = filter_low_ball_visibility(frames, auto);
+
+    // Segment into sequences — no review store, use quality gate instead
+    let sequences = segment_sequences_auto(&raw.metadata, frames, config, auto);
+
+    let review_game = ReviewGame {
+        metadata: raw.metadata.clone(),
+        frames: sequences
+            .iter()
+            .flat_map(|sequence| sequence.frames.clone())
+            .collect(),
+        sequence_summaries: sequences
+            .iter()
+            .map(|sequence| ReviewSequenceSummary {
+                sequence_index: sequence.index,
+                start_frame: sequence
+                    .frames
+                    .first()
+                    .map(|frame| frame.frame_number)
+                    .unwrap_or_default(),
+                end_frame: sequence
+                    .frames
+                    .last()
+                    .map(|frame| frame.frame_number)
+                    .unwrap_or_default(),
+                start_time_s: sequence
+                    .frames
+                    .first()
+                    .map(|frame| frame.timestamp_s)
+                    .unwrap_or_default(),
+                end_time_s: sequence
+                    .frames
+                    .last()
+                    .map(|frame| frame.timestamp_s)
+                    .unwrap_or_default(),
+                frame_count: sequence.frames.len(),
+                quality_score: sequence.quality_score,
+                sequence_kind: sequence.kind,
+                warnings: sequence.quality_flags.clone(),
+            })
+            .collect(),
+    };
+    let normalization = compute_normalization_stats_from_sequences(&sequences);
+    let samples = if build_training_samples {
+        build_samples(
+            &raw.metadata,
+            &sequences,
+            config,
+            split.unwrap_or_else(|| "train".to_string()),
+        )
+    } else {
+        Vec::new()
+    };
+
+    PipelineOutput {
+        metadata: raw.metadata,
+        audit: raw.audit,
+        review_game,
+        samples,
+        normalization,
+    }
+}
+
 fn run_pipeline(
     raw: RawGame,
     config: &PipelineConfig,
     review: Option<&ReviewStore>,
     split: Option<String>,
+    build_training_samples: bool,
 ) -> PipelineOutput {
     let resampled = resample_frames(raw.frames, config);
     let filtered = filter_live_frames(resampled, config);
@@ -140,16 +282,21 @@ fn run_pipeline(
                 frame_count: sequence.frames.len(),
                 quality_score: sequence.quality_score,
                 sequence_kind: sequence.kind,
+                warnings: sequence.quality_flags.clone(),
             })
             .collect(),
     };
     let normalization = compute_normalization_stats_from_sequences(&sequences);
-    let samples = build_samples(
-        &raw.metadata,
-        &sequences,
-        config,
-        split.unwrap_or_else(|| "train".to_string()),
-    );
+    let samples = if build_training_samples {
+        build_samples(
+            &raw.metadata,
+            &sequences,
+            config,
+            split.unwrap_or_else(|| "train".to_string()),
+        )
+    } else {
+        Vec::new()
+    };
 
     PipelineOutput {
         metadata: raw.metadata,
@@ -889,6 +1036,413 @@ fn apply_split_weights(outputs: &mut [PipelineOutput], bundle: &SplitBundle) {
                 };
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Automated cleaning passes
+// ---------------------------------------------------------------------------
+
+/// Drop frames whose timestamp is identical to the previous frame's.
+fn drop_duplicate_timestamps(frames: Vec<CleanFrame>) -> Vec<CleanFrame> {
+    let mut out = Vec::with_capacity(frames.len());
+    let mut prev_ts: Option<f64> = None;
+    for frame in frames {
+        let dominated = prev_ts
+            .map(|prev| (frame.timestamp_s - prev).abs() <= f64::EPSILON)
+            .unwrap_or(false);
+        if !dominated {
+            prev_ts = Some(frame.timestamp_s);
+            out.push(frame);
+        }
+    }
+    out
+}
+
+/// Remove robots (set slot to `None`) whose SSL-Vision visibility score falls
+/// below the configured threshold.  The frame itself is kept.
+fn filter_low_visibility(mut frames: Vec<CleanFrame>, auto: &AutoCleanConfig) -> Vec<CleanFrame> {
+    for frame in &mut frames {
+        for slot in frame.target_team.iter_mut() {
+            if let Some(robot) = slot {
+                if robot.visibility < auto.min_visibility {
+                    *slot = None;
+                }
+            }
+        }
+        for slot in frame.opponent_team.iter_mut() {
+            if let Some(robot) = slot {
+                if robot.visibility < auto.min_visibility {
+                    *slot = None;
+                }
+            }
+        }
+    }
+    frames
+}
+
+/// Drop frames where the ball's visibility is below the threshold. The frame
+/// is kept but the ball observation is cleared.
+fn filter_low_ball_visibility(
+    mut frames: Vec<CleanFrame>,
+    auto: &AutoCleanConfig,
+) -> Vec<CleanFrame> {
+    for frame in &mut frames {
+        if let Some(ball) = &frame.ball {
+            if ball.visibility < auto.min_ball_visibility {
+                frame.ball = None;
+            }
+        }
+    }
+    frames
+}
+
+/// Drop frames where not enough robots are visible on each team.
+fn filter_incomplete_teams(frames: Vec<CleanFrame>, auto: &AutoCleanConfig) -> Vec<CleanFrame> {
+    frames
+        .into_iter()
+        .filter(|frame| {
+            let target_count = frame.target_team.iter().flatten().count();
+            let opponent_count = frame.opponent_team.iter().flatten().count();
+            target_count >= auto.min_visible_target_robots
+                && opponent_count >= auto.min_visible_opponent_robots
+        })
+        .collect()
+}
+
+/// Remove frames where any robot "teleports" — moves further than
+/// `teleport_threshold_m` between consecutive timestamps, which indicates a
+/// tracking glitch rather than real motion.
+fn detect_and_remove_teleports(
+    frames: Vec<CleanFrame>,
+    auto: &AutoCleanConfig,
+    config: &PipelineConfig,
+) -> Vec<CleanFrame> {
+    if frames.len() < 2 {
+        return frames;
+    }
+    let mut keep = vec![true; frames.len()];
+
+    for i in 1..frames.len() {
+        let dt = (frames[i].timestamp_s - frames[i - 1].timestamp_s) as f32;
+        if dt <= 0.0 {
+            continue;
+        }
+        // Scale threshold by dt so we're comparing displacement, not speed.
+        // For normal dt (~0.033s at 30 Hz) the raw threshold applies.
+        // For larger gaps the threshold scales linearly.
+        let threshold = auto.teleport_threshold_m * (dt / 0.033).max(1.0);
+
+        let teleport_detected = has_teleport(
+            &frames[i - 1].target_team,
+            &frames[i].target_team,
+            threshold,
+        ) || has_teleport(
+            &frames[i - 1].opponent_team,
+            &frames[i].opponent_team,
+            threshold,
+        ) || has_ball_teleport(
+            frames[i - 1].ball.as_ref(),
+            frames[i].ball.as_ref(),
+            threshold * 2.0, // ball can move faster
+        );
+
+        if teleport_detected {
+            keep[i] = false;
+        }
+    }
+
+    let _ = config; // reserved for future use
+    frames
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(frame, keep)| if keep { Some(frame) } else { None })
+        .collect()
+}
+
+fn has_teleport(
+    prev_team: &[Option<EntityState>],
+    curr_team: &[Option<EntityState>],
+    threshold: f32,
+) -> bool {
+    for (prev_slot, curr_slot) in prev_team.iter().zip(curr_team.iter()) {
+        if let (Some(prev), Some(curr)) = (prev_slot, curr_slot) {
+            // Only compare if stable IDs match (same tracked robot).
+            if prev.stable_id.is_some() && prev.stable_id == curr.stable_id {
+                let dx = curr.x - prev.x;
+                let dy = curr.y - prev.y;
+                if (dx * dx + dy * dy).sqrt() > threshold {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn has_ball_teleport(
+    prev: Option<&BallState>,
+    curr: Option<&BallState>,
+    threshold: f32,
+) -> bool {
+    if let (Some(prev), Some(curr)) = (prev, curr) {
+        let dx = curr.x - prev.x;
+        let dy = curr.y - prev.y;
+        (dx * dx + dy * dy).sqrt() > threshold
+    } else {
+        false
+    }
+}
+
+/// Remove frames where the *raw* speed of any robot exceeds the spike
+/// threshold — this is distinct from clamping and indicates the observation
+/// itself is garbage (vision glitch, ID swap residue).
+fn remove_velocity_spikes(frames: Vec<CleanFrame>, auto: &AutoCleanConfig) -> Vec<CleanFrame> {
+    if frames.len() < 3 {
+        return frames;
+    }
+    let threshold_sq = auto.velocity_spike_threshold_m_s * auto.velocity_spike_threshold_m_s;
+    let mut keep = vec![true; frames.len()];
+
+    for i in 1..frames.len() - 1 {
+        let dt_prev = (frames[i].timestamp_s - frames[i - 1].timestamp_s) as f32;
+        let dt_next = (frames[i + 1].timestamp_s - frames[i].timestamp_s) as f32;
+        if dt_prev <= 0.0 || dt_next <= 0.0 {
+            continue;
+        }
+        // Check whether the frame at `i` is a spike by comparing the
+        // interpolated position (from i-1 → i+1) against the observed
+        // position.  A large deviation signals a single-frame vision glitch.
+        let spike = frame_has_position_spike(
+            &frames[i - 1],
+            &frames[i],
+            &frames[i + 1],
+            threshold_sq,
+            dt_prev,
+            dt_next,
+        );
+        if spike {
+            keep[i] = false;
+        }
+    }
+
+    frames
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(frame, keep)| if keep { Some(frame) } else { None })
+        .collect()
+}
+
+fn frame_has_position_spike(
+    prev: &CleanFrame,
+    curr: &CleanFrame,
+    next: &CleanFrame,
+    threshold_sq: f32,
+    dt_prev: f32,
+    dt_next: f32,
+) -> bool {
+    let alpha = dt_prev / (dt_prev + dt_next);
+    for (slot_idx, curr_slot) in curr.target_team.iter().enumerate() {
+        if let Some(curr_robot) = curr_slot {
+            let prev_robot = prev.target_team.get(slot_idx).and_then(|s| s.as_ref());
+            let next_robot = next.target_team.get(slot_idx).and_then(|s| s.as_ref());
+            if let (Some(p), Some(n)) = (prev_robot, next_robot) {
+                if p.stable_id.is_some()
+                    && p.stable_id == curr_robot.stable_id
+                    && curr_robot.stable_id == n.stable_id
+                {
+                    let interp_x = p.x + alpha * (n.x - p.x);
+                    let interp_y = p.y + alpha * (n.y - p.y);
+                    let dx = curr_robot.x - interp_x;
+                    let dy = curr_robot.y - interp_y;
+                    if dx * dx + dy * dy > threshold_sq {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    for (slot_idx, curr_slot) in curr.opponent_team.iter().enumerate() {
+        if let Some(curr_robot) = curr_slot {
+            let prev_robot = prev.opponent_team.get(slot_idx).and_then(|s| s.as_ref());
+            let next_robot = next.opponent_team.get(slot_idx).and_then(|s| s.as_ref());
+            if let (Some(p), Some(n)) = (prev_robot, next_robot) {
+                if p.stable_id.is_some()
+                    && p.stable_id == curr_robot.stable_id
+                    && curr_robot.stable_id == n.stable_id
+                {
+                    let interp_x = p.x + alpha * (n.x - p.x);
+                    let interp_y = p.y + alpha * (n.y - p.y);
+                    let dx = curr_robot.x - interp_x;
+                    let dy = curr_robot.y - interp_y;
+                    if dx * dx + dy * dy > threshold_sq {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 3-frame (or `smoothing_window`-frame) median filter on x/y positions.
+/// This reduces vision jitter without introducing the phase lag that comes
+/// with a moving-average.
+fn smooth_positions(mut frames: Vec<CleanFrame>, auto: &AutoCleanConfig) -> Vec<CleanFrame> {
+    let half = auto.smoothing_window / 2;
+    if frames.len() < auto.smoothing_window {
+        return frames;
+    }
+
+    // Work on a clone so we read unmodified neighbours.
+    let source = frames.clone();
+
+    for i in half..frames.len().saturating_sub(half) {
+        // Target team
+        for slot in 0..frames[i].target_team.len() {
+            if frames[i].target_team[slot].is_none() {
+                continue;
+            }
+            let mut xs = Vec::new();
+            let mut ys = Vec::new();
+            for w in i.saturating_sub(half)..=(i + half).min(source.len() - 1) {
+                if let Some(robot) = source[w]
+                    .target_team
+                    .get(slot)
+                    .and_then(|s| s.as_ref())
+                {
+                    xs.push(robot.x);
+                    ys.push(robot.y);
+                }
+            }
+            if xs.len() >= 3 {
+                if let Some(robot) = frames[i].target_team[slot].as_mut() {
+                    robot.x = median(&mut xs);
+                    robot.y = median(&mut ys);
+                }
+            }
+        }
+
+        // Opponent team
+        for slot in 0..frames[i].opponent_team.len() {
+            if frames[i].opponent_team[slot].is_none() {
+                continue;
+            }
+            let mut xs = Vec::new();
+            let mut ys = Vec::new();
+            for w in i.saturating_sub(half)..=(i + half).min(source.len() - 1) {
+                if let Some(robot) = source[w]
+                    .opponent_team
+                    .get(slot)
+                    .and_then(|s| s.as_ref())
+                {
+                    xs.push(robot.x);
+                    ys.push(robot.y);
+                }
+            }
+            if xs.len() >= 3 {
+                if let Some(robot) = frames[i].opponent_team[slot].as_mut() {
+                    robot.x = median(&mut xs);
+                    robot.y = median(&mut ys);
+                }
+            }
+        }
+
+        // Ball
+        if frames[i].ball.is_some() {
+            let mut xs = Vec::new();
+            let mut ys = Vec::new();
+            for w in i.saturating_sub(half)..=(i + half).min(source.len() - 1) {
+                if let Some(ball) = &source[w].ball {
+                    xs.push(ball.x);
+                    ys.push(ball.y);
+                }
+            }
+            if xs.len() >= 3 {
+                if let Some(ball) = frames[i].ball.as_mut() {
+                    ball.x = median(&mut xs);
+                    ball.y = median(&mut ys);
+                }
+            }
+        }
+    }
+
+    frames
+}
+
+fn median(values: &mut [f32]) -> f32 {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
+    }
+}
+
+/// Like [`segment_sequences`] but applies an automatic quality gate instead of
+/// consulting a [`ReviewStore`].
+fn segment_sequences_auto(
+    _metadata: &GameMetadata,
+    frames: Vec<CleanFrame>,
+    config: &PipelineConfig,
+    auto: &AutoCleanConfig,
+) -> Vec<Sequence> {
+    let mut sequences = Vec::new();
+    let mut current = Vec::new();
+    let mut next_index = 0usize;
+
+    for frame in frames {
+        let should_break = current
+            .last()
+            .map(|previous: &CleanFrame| {
+                (frame.timestamp_s - previous.timestamp_s) > config.max_frame_gap_s
+                    || possession_break(previous, &frame, config)
+            })
+            .unwrap_or(false);
+
+        if should_break {
+            if let Some(sequence) =
+                finalize_sequence_auto(next_index, std::mem::take(&mut current), config, auto)
+            {
+                sequences.push(sequence);
+                next_index += 1;
+            }
+        }
+        current.push(frame);
+    }
+
+    if let Some(sequence) = finalize_sequence_auto(next_index, current, config, auto) {
+        sequences.push(sequence);
+    }
+
+    sequences
+}
+
+fn finalize_sequence_auto(
+    index: usize,
+    frames: Vec<CleanFrame>,
+    config: &PipelineConfig,
+    auto: &AutoCleanConfig,
+) -> Option<Sequence> {
+    if frames.len() < config.min_sequence_frames || frames.len() > config.max_sequence_frames {
+        return None;
+    }
+    let kind = classify_sequence(&frames);
+    let mut quality_flags = Vec::new();
+    let quality_score = score_sequence(&frames, &mut quality_flags, kind);
+
+    // Auto quality gate — replaces manual review for the headless pipeline.
+    if quality_score < auto.min_quality_score {
+        return None;
+    }
+
+    Some(Sequence {
+        index,
+        frames,
+        quality_score,
+        quality_flags,
+        kind,
+    })
 }
 
 fn role_to_float(role: RoleLabel) -> f32 {
