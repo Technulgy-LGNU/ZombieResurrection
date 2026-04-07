@@ -13,3 +13,7 @@ zr-core = { path = "../zr-core", features = [] }
 [[bin]]
 name = "zombie-resurrection"
 path = "src/main.rs"
+
+[[bin]]
+name = "zr-auto-pipeline"
+path = "src/auto_pipeline.rs"
