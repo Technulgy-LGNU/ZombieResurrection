@@ -6,20 +6,21 @@ Rust workspace for turning raw RoboCup SSL logs into model-ready training sample
 
 - Live mode: parse `.log` / `.log.gz` files with `loguna`, clean them, segment sequences, and emit per-robot training samples on demand.
 - Archive mode: preprocess logs into compressed `rkyv + zstd` shards with manifest, split bundle, and normalization stats.
-- Review tool: local Rust API plus React/Vite web app for sequence review, playback, overlays, and bulk triage.
+- Review tool: embedded Rust review server plus React/Vite web app for sequence review, playback, overlays, and bulk triage.
 - Optional `tch` feature in `zr-core`: convert sample batches into weighted `tch::Tensor` values.
 
 ## Workspace crates
 
 - `crates/zr-core` - core library only
 - `crates/zr-cli` - CLI tools
-- `crates/zr-review-api` - local review API server
+- `crates/zr-review` - embedded local review server
 - `apps/zr-review-web` - review web frontend
 
 ## Binaries
 
-- `zombie-resurrection`
-- `zr-review-api`
+- `zombie-resurrection` — interactive preprocessing with optional manual review
+- `zr-auto-pipeline` — fully-automated raw → training-data pipeline (no human intervention)
+- `zr-review` — embedded local review server
 
 ## Quick start
 
@@ -33,31 +34,42 @@ Audit one log:
 
 ```sh
 cargo run -p zr-cli --bin zombie-resurrection -- audit \
-  --input loguna-src/2025-07-17_21-37_GROUP_PHASE_The_Bots-vs-ITAndroids.log.gz \
-  --team-name The_Bots
+  --input /path/to/raw-log \
+  --team-name YourTeam
 ```
 
 Preprocess logs into archived shards:
 
 ```sh
 cargo run -p zr-cli --bin zombie-resurrection -- preprocess \
-  --input loguna-src \
-  --team-name The_Bots \
+  --input /path/to/raw-logs \
+  --team-name YourTeam \
   --output-dir data/processed \
   --review-file data/review.json
 ```
 
-Run the local review API:
+Automated pipeline (no review, enhanced cleaning):
 
 ```sh
-cargo run -p zr-review-api --bin zr-review-api -- \
-  --logs-dir loguna-src \
-  --team-name The_Bots \
-  --review-file data/review.json \
-  --web-root apps/zr-review-web/dist
+cargo run -p zr-cli --bin zr-auto-pipeline -- \
+  --input /path/to/raw-logs \
+  --team-name YourTeam \
+  --output-dir data/auto \
+  --verbose
 ```
 
-Build and run the web frontend in dev mode:
+Run the embedded review server:
+
+```sh
+cargo run -p zr-review --bin zr-review -- \
+  --logs-dir /path/to/raw-logs \
+  --team-name YourTeam \
+  --review-file data/review.json
+```
+
+The frontend is built and embedded automatically by `build.rs`.
+
+For frontend-only iteration you can still run:
 
 ```sh
 cd apps/zr-review-web
@@ -73,10 +85,10 @@ use std::path::PathBuf;
 use zr_core::{LiveDataset, PipelineConfig, ReviewStore, TeamSelector};
 
 let mut config = PipelineConfig::default();
-config.target_team = TeamSelector::Name("The_Bots".to_string());
+config.target_team = TeamSelector::Name("YourTeam".to_string());
 
 let dataset = LiveDataset::new(
-    vec![PathBuf::from("loguna-src/2025-07-19_18-59_ELIMINATION_PHASE_The_Bots-vs-ITAndroids.log.gz")],
+    vec![PathBuf::from("/path/to/raw-log")],
     config,
     Some(ReviewStore::default()),
 );
