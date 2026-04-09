@@ -8,7 +8,7 @@ use rand_distr::{Distribution, Normal};
 
 use crate::archive::{NormalizationStats, SplitAssignment, SplitBundle};
 use crate::config::{AutoCleanConfig, PipelineConfig};
-use crate::raw::{load_raw_game, RawGame};
+use crate::raw::{RawGame, load_raw_game};
 use crate::review::{ReviewStore, ReviewVerdict};
 use crate::types::{
     AuditSummary, BallState, CleanFrame, EntityState, GameMetadata, MatchPhase,
@@ -659,6 +659,7 @@ fn build_samples(
                             target,
                             occupancy_grid.clone(),
                             metadata.clone(),
+                            config,
                         ));
                     }
                     if config.augmentation.mirror_x {
@@ -667,6 +668,7 @@ fn build_samples(
                             target,
                             occupancy_grid.clone(),
                             metadata.clone(),
+                            config,
                         ));
                     }
                     if config.augmentation.gaussian_noise_std_m > 0.0 {
@@ -876,14 +878,13 @@ fn mirror_y_sample(
     target: [f32; 3],
     occupancy_grid: Option<Vec<f32>>,
     metadata: TrainingSampleMetadata,
+    config: &PipelineConfig,
 ) -> TrainingSample {
-    for value in input.iter_mut().skip(1).step_by(8) {
-        *value = -*value;
-    }
+    mirror_sample_input(&mut input, config, false, true);
     TrainingSample {
         input,
         target: [target[0], -target[1], -target[2]],
-        occupancy_grid,
+        occupancy_grid: occupancy_grid.map(|grid| mirror_occupancy_grid(grid, config, false, true)),
         metadata,
     }
 }
@@ -893,14 +894,13 @@ fn mirror_x_sample(
     target: [f32; 3],
     occupancy_grid: Option<Vec<f32>>,
     metadata: TrainingSampleMetadata,
+    config: &PipelineConfig,
 ) -> TrainingSample {
-    for value in input.iter_mut().step_by(8) {
-        *value = -*value;
-    }
+    mirror_sample_input(&mut input, config, true, false);
     TrainingSample {
         input,
         target: [-target[0], target[1], -target[2]],
-        occupancy_grid,
+        occupancy_grid: occupancy_grid.map(|grid| mirror_occupancy_grid(grid, config, true, false)),
         metadata,
     }
 }
@@ -925,6 +925,109 @@ fn noisy_sample(
         occupancy_grid,
         metadata,
     }
+}
+
+fn mirror_sample_input(input: &mut [f32], config: &PipelineConfig, flip_x: bool, flip_y: bool) {
+    let step_dim = config.sample_feature_dim() / config.window.length.max(1);
+    let robot_count = (config.max_team_size - 1) + config.max_team_size;
+    for step in 0..config.window.length {
+        let step_offset = step * step_dim;
+        mirror_pose_features(&mut input[step_offset..step_offset + 8], flip_x, flip_y);
+        mirror_ball_features(
+            &mut input[step_offset + 8..step_offset + 18],
+            flip_x,
+            flip_y,
+        );
+
+        let robots_offset = step_offset + 29;
+        for robot_index in 0..robot_count {
+            let offset = robots_offset + robot_index * 14;
+            mirror_relative_robot_features(&mut input[offset..offset + 14], flip_x, flip_y);
+        }
+    }
+}
+
+fn mirror_pose_features(features: &mut [f32], flip_x: bool, flip_y: bool) {
+    if flip_x {
+        features[0] = -features[0];
+        features[2] = -features[2];
+        features[4] = -features[4];
+        features[7] = -features[7];
+    }
+    if flip_y {
+        features[1] = -features[1];
+        features[3] = -features[3];
+        features[5] = -features[5];
+        features[6] = -features[6];
+    }
+}
+
+fn mirror_ball_features(features: &mut [f32], flip_x: bool, flip_y: bool) {
+    if flip_x {
+        features[0] = -features[0];
+        features[2] = -features[2];
+        features[4] = -features[4];
+        features[7] = -features[7];
+    }
+    if flip_y {
+        features[1] = -features[1];
+        features[3] = -features[3];
+        features[5] = -features[5];
+        features[7] = -features[7];
+    }
+}
+
+fn mirror_relative_robot_features(features: &mut [f32], flip_x: bool, flip_y: bool) {
+    if flip_x {
+        features[0] = -features[0];
+        features[2] = -features[2];
+        features[4] = -features[4];
+        features[7] = -features[7];
+        features[9] = -features[9];
+    }
+    if flip_y {
+        features[1] = -features[1];
+        features[3] = -features[3];
+        features[5] = -features[5];
+        features[6] = -features[6];
+        features[9] = -features[9];
+    }
+}
+
+fn mirror_occupancy_grid(
+    grid: Vec<f32>,
+    config: &PipelineConfig,
+    flip_x: bool,
+    flip_y: bool,
+) -> Vec<f32> {
+    if !flip_x && !flip_y {
+        return grid;
+    }
+
+    let width = config.occupancy_grid_width;
+    let height = config.occupancy_grid_height;
+    let plane_len = width * height;
+    let channels = if plane_len == 0 {
+        0
+    } else {
+        grid.len() / plane_len
+    };
+    let mut mirrored = vec![0.0; grid.len()];
+
+    for channel in 0..channels {
+        let plane_offset = channel * plane_len;
+        for y in 0..height {
+            for x in 0..width {
+                let source_x = if flip_x { width - 1 - x } else { x };
+                let source_y = if flip_y { height - 1 - y } else { y };
+                let dst = plane_offset + y * width + x;
+                let src = plane_offset + source_y * width + source_x;
+                mirrored[dst] = grid[src];
+            }
+        }
+    }
+
+    mirrored
 }
 
 fn assign_splits(raws: &[RawGame], config: &PipelineConfig) -> Vec<SplitAssignment> {
@@ -1179,11 +1282,7 @@ fn has_teleport(
     false
 }
 
-fn has_ball_teleport(
-    prev: Option<&BallState>,
-    curr: Option<&BallState>,
-    threshold: f32,
-) -> bool {
+fn has_ball_teleport(prev: Option<&BallState>, curr: Option<&BallState>, threshold: f32) -> bool {
     if let (Some(prev), Some(curr)) = (prev, curr) {
         let dx = curr.x - prev.x;
         let dy = curr.y - prev.y;
@@ -1305,11 +1404,7 @@ fn smooth_positions(mut frames: Vec<CleanFrame>, auto: &AutoCleanConfig) -> Vec<
             let mut xs = Vec::new();
             let mut ys = Vec::new();
             for w in i.saturating_sub(half)..=(i + half).min(source.len() - 1) {
-                if let Some(robot) = source[w]
-                    .target_team
-                    .get(slot)
-                    .and_then(|s| s.as_ref())
-                {
+                if let Some(robot) = source[w].target_team.get(slot).and_then(|s| s.as_ref()) {
                     xs.push(robot.x);
                     ys.push(robot.y);
                 }
@@ -1330,11 +1425,7 @@ fn smooth_positions(mut frames: Vec<CleanFrame>, auto: &AutoCleanConfig) -> Vec<
             let mut xs = Vec::new();
             let mut ys = Vec::new();
             for w in i.saturating_sub(half)..=(i + half).min(source.len() - 1) {
-                if let Some(robot) = source[w]
-                    .opponent_team
-                    .get(slot)
-                    .and_then(|s| s.as_ref())
-                {
+                if let Some(robot) = source[w].opponent_team.get(slot).and_then(|s| s.as_ref()) {
                     xs.push(robot.x);
                     ys.push(robot.y);
                 }
@@ -1478,4 +1569,60 @@ pub fn summarize_games_by_phase(outputs: &[PipelineOutput]) -> BTreeMap<String, 
         *counts.entry(key.to_string()).or_default() += 1;
     }
     counts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mirror_occupancy_grid, mirror_sample_input};
+    use crate::config::PipelineConfig;
+
+    #[test]
+    fn mirror_x_updates_all_feature_groups() {
+        let mut config = PipelineConfig::default();
+        config.window.length = 1;
+        config.max_team_size = 2;
+
+        let mut input = vec![0.0; config.sample_feature_dim()];
+        input[0] = 0.2;
+        input[2] = 0.3;
+        input[4] = 0.4;
+        input[7] = 0.5;
+        input[8] = 0.6;
+        input[10] = 0.7;
+        input[12] = 0.8;
+        input[15] = 0.9;
+
+        let robot_offset = 29;
+        input[robot_offset] = 0.11;
+        input[robot_offset + 2] = 0.12;
+        input[robot_offset + 4] = 0.13;
+        input[robot_offset + 7] = 0.14;
+        input[robot_offset + 9] = 0.15;
+
+        mirror_sample_input(&mut input, &config, true, false);
+
+        assert_eq!(input[0], -0.2);
+        assert_eq!(input[2], -0.3);
+        assert_eq!(input[4], -0.4);
+        assert_eq!(input[7], -0.5);
+        assert_eq!(input[8], -0.6);
+        assert_eq!(input[10], -0.7);
+        assert_eq!(input[12], -0.8);
+        assert_eq!(input[15], -0.9);
+        assert_eq!(input[robot_offset], -0.11);
+        assert_eq!(input[robot_offset + 2], -0.12);
+        assert_eq!(input[robot_offset + 4], -0.13);
+        assert_eq!(input[robot_offset + 7], -0.14);
+        assert_eq!(input[robot_offset + 9], -0.15);
+    }
+
+    #[test]
+    fn mirror_y_flips_grid_rows() {
+        let mut config = PipelineConfig::default();
+        config.occupancy_grid_width = 3;
+        config.occupancy_grid_height = 2;
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let mirrored = mirror_occupancy_grid(input, &config, false, true);
+        assert_eq!(mirrored, vec![4.0, 5.0, 6.0, 1.0, 2.0, 3.0]);
+    }
 }

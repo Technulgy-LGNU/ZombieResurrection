@@ -25,6 +25,11 @@ pub use review_payload::{
     ReviewGamePayload, ReviewSequencePayload, ReviewSequenceQueryPayload, build_review_payload,
     build_review_sequence_payload,
 };
+#[cfg(feature = "tch")]
+pub use tch_support::{
+    SequenceTensorBatch, per_timestep_feature_dim, samples_to_sequence_tensors, samples_to_tensors,
+    samples_to_weighted_tensors,
+};
 pub use types::{
     AuditSummary, GameMetadata, MatchPhase, ReviewSequenceSummary, RoleLabel, SequenceKind,
     TeamColor, TrainingSample, TrainingSampleMetadata,
