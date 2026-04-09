@@ -95,7 +95,11 @@ pub fn load_raw_game(path: &Path, config: &PipelineConfig) -> Result<RawGame> {
                 let Some(frame) = wrapper.tracked_frame else {
                     continue;
                 };
-                let key = (frame.frame_number, frame.timestamp.to_bits(), source_name.clone());
+                let key = (
+                    frame.frame_number,
+                    frame.timestamp.to_bits(),
+                    source_name.clone(),
+                );
                 if last_tracker_key.as_ref() == Some(&key) {
                     duplicate_frames += 1;
                     continue;
@@ -135,8 +139,14 @@ pub fn load_raw_game(path: &Path, config: &PipelineConfig) -> Result<RawGame> {
     } = build_clean_frames(&tracker_frames, &referee_state, target_color, config);
     estimate_dynamics(&mut clean_frames, config);
 
-    let out_of_bounds_objects = clean_frames.iter().map(|frame| frame.flags.out_of_bounds_objects).sum();
-    let missing_ball_frames = clean_frames.iter().filter(|frame| frame.ball.is_none()).count();
+    let out_of_bounds_objects = clean_frames
+        .iter()
+        .map(|frame| frame.flags.out_of_bounds_objects)
+        .sum();
+    let missing_ball_frames = clean_frames
+        .iter()
+        .filter(|frame| frame.ball.is_none())
+        .count();
 
     let duration_s = clean_frames
         .last()
@@ -189,13 +199,19 @@ pub fn load_raw_game(path: &Path, config: &PipelineConfig) -> Result<RawGame> {
 
     let mut notes = Vec::new();
     if duplicate_frames > 0 {
-        notes.push(format!("dropped {duplicate_frames} duplicate tracker frames"));
+        notes.push(format!(
+            "dropped {duplicate_frames} duplicate tracker frames"
+        ));
     }
     if missing_ball_frames > 0 {
-        notes.push(format!("{missing_ball_frames} frames missing a primary ball"));
+        notes.push(format!(
+            "{missing_ball_frames} frames missing a primary ball"
+        ));
     }
     if suspicious_identity_swaps > 0 {
-        notes.push(format!("flagged {suspicious_identity_swaps} likely identity swaps"));
+        notes.push(format!(
+            "flagged {suspicious_identity_swaps} likely identity swaps"
+        ));
     }
 
     let audit = AuditSummary {
@@ -256,8 +272,16 @@ fn raw_frame_from_tracker(frame: loguna::proto::TrackedFrame) -> RawFrame {
             x: robot.pos.x as f32,
             y: robot.pos.y as f32,
             theta: robot.orientation,
-            vx: robot.vel.as_ref().map(|value| value.x as f32).unwrap_or_default(),
-            vy: robot.vel.as_ref().map(|value| value.y as f32).unwrap_or_default(),
+            vx: robot
+                .vel
+                .as_ref()
+                .map(|value| value.x as f32)
+                .unwrap_or_default(),
+            vy: robot
+                .vel
+                .as_ref()
+                .map(|value| value.y as f32)
+                .unwrap_or_default(),
             omega: robot.vel_angular.unwrap_or_default(),
             ax: 0.0,
             ay: 0.0,
@@ -274,8 +298,16 @@ fn raw_frame_from_tracker(frame: loguna::proto::TrackedFrame) -> RawFrame {
         x: ball.pos.x as f32,
         y: ball.pos.y as f32,
         z: ball.pos.z as f32,
-        vx: ball.vel.as_ref().map(|value| value.x as f32).unwrap_or_default(),
-        vy: ball.vel.as_ref().map(|value| value.y as f32).unwrap_or_default(),
+        vx: ball
+            .vel
+            .as_ref()
+            .map(|value| value.x as f32)
+            .unwrap_or_default(),
+        vy: ball
+            .vel
+            .as_ref()
+            .map(|value| value.y as f32)
+            .unwrap_or_default(),
         ax: 0.0,
         ay: 0.0,
         visibility: ball.visibility.unwrap_or(1.0),
@@ -352,9 +384,10 @@ fn build_clean_frames(
         let mut out_of_bounds_objects = 0usize;
         filter_slots_in_bounds(&mut target_team, config, &mut out_of_bounds_objects);
         filter_slots_in_bounds(&mut opponent_team, config, &mut out_of_bounds_objects);
-        let ball = raw.ball.clone().filter(|ball| {
-            within_bounds(ball.x, ball.y, config, &mut out_of_bounds_objects)
-        });
+        let ball = raw
+            .ball
+            .clone()
+            .filter(|ball| within_bounds(ball.x, ball.y, config, &mut out_of_bounds_objects));
 
         let carried_ball = ball
             .as_ref()
@@ -664,7 +697,8 @@ fn within_bounds(x: f32, y: f32, config: &PipelineConfig, counter: &mut usize) -
 }
 
 fn referee_command_live(state: &RefereeState, config: &PipelineConfig) -> bool {
-    state.latest
+    state
+        .latest
         .as_ref()
         .and_then(|snapshot| snapshot.command)
         .map(|command| config.live_play.referee_live_commands.contains(&command))
@@ -678,13 +712,18 @@ fn motion_looks_live(
     config: &PipelineConfig,
 ) -> bool {
     let ball_live = ball
-        .map(|ball| (ball.vx * ball.vx + ball.vy * ball.vy).sqrt() >= config.live_play.min_ball_speed_m_s)
+        .map(|ball| {
+            (ball.vx * ball.vx + ball.vy * ball.vy).sqrt() >= config.live_play.min_ball_speed_m_s
+        })
         .unwrap_or(false);
     let robot_live = target_team
         .iter()
         .chain(opponent_team.iter())
         .flatten()
-        .any(|robot| (robot.vx * robot.vx + robot.vy * robot.vy).sqrt() >= config.live_play.min_robot_speed_m_s);
+        .any(|robot| {
+            (robot.vx * robot.vx + robot.vy * robot.vy).sqrt()
+                >= config.live_play.min_robot_speed_m_s
+        });
     ball_live || robot_live
 }
 
@@ -703,7 +742,11 @@ fn target_attacks_positive(state: &RefereeState, target_color: TeamColor) -> boo
 fn estimate_dynamics(frames: &mut [CleanFrame], config: &PipelineConfig) {
     for index in 0..frames.len() {
         let prev = index.checked_sub(1);
-        let next = if index + 1 < frames.len() { Some(index + 1) } else { None };
+        let next = if index + 1 < frames.len() {
+            Some(index + 1)
+        } else {
+            None
+        };
         let dt = match (prev, next) {
             (Some(prev_index), Some(next_index)) => {
                 (frames[next_index].timestamp_s - frames[prev_index].timestamp_s) as f32
@@ -715,8 +758,24 @@ fn estimate_dynamics(frames: &mut [CleanFrame], config: &PipelineConfig) {
         }
 
         estimate_ball_dynamics(frames, index, prev.unwrap(), next.unwrap(), dt, config);
-        estimate_team_dynamics(frames, index, prev.unwrap(), next.unwrap(), dt, true, config);
-        estimate_team_dynamics(frames, index, prev.unwrap(), next.unwrap(), dt, false, config);
+        estimate_team_dynamics(
+            frames,
+            index,
+            prev.unwrap(),
+            next.unwrap(),
+            dt,
+            true,
+            config,
+        );
+        estimate_team_dynamics(
+            frames,
+            index,
+            prev.unwrap(),
+            next.unwrap(),
+            dt,
+            false,
+            config,
+        );
     }
 }
 
@@ -735,12 +794,16 @@ fn estimate_ball_dynamics(
         return;
     };
     if let Some(ball) = frames[index].ball.as_mut() {
-        ball.vx = ((next_ball.x - prev_ball.x) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
-        ball.vy = ((next_ball.y - prev_ball.y) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
+        ball.vx =
+            ((next_ball.x - prev_ball.x) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
+        ball.vy =
+            ((next_ball.y - prev_ball.y) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
         let prev_vx = prev_ball.vx;
         let prev_vy = prev_ball.vy;
-        ball.ax = ((ball.vx - prev_vx) / (dt / 2.0)).clamp(-config.max_acceleration_m_s2, config.max_acceleration_m_s2);
-        ball.ay = ((ball.vy - prev_vy) / (dt / 2.0)).clamp(-config.max_acceleration_m_s2, config.max_acceleration_m_s2);
+        ball.ax = ((ball.vx - prev_vx) / (dt / 2.0))
+            .clamp(-config.max_acceleration_m_s2, config.max_acceleration_m_s2);
+        ball.ay = ((ball.vy - prev_vy) / (dt / 2.0))
+            .clamp(-config.max_acceleration_m_s2, config.max_acceleration_m_s2);
     }
 }
 
@@ -779,10 +842,14 @@ fn estimate_team_dynamics(
         let Some(robot) = current_team.get_mut(slot).and_then(|value| value.as_mut()) else {
             continue;
         };
-        robot.vx = ((next_robot.x - prev_robot.x) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
-        robot.vy = ((next_robot.y - prev_robot.y) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
-        robot.omega = ((next_robot.theta - prev_robot.theta) / dt)
-            .clamp(-config.max_angular_speed_rad_s, config.max_angular_speed_rad_s);
+        robot.vx =
+            ((next_robot.x - prev_robot.x) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
+        robot.vy =
+            ((next_robot.y - prev_robot.y) / dt).clamp(-config.max_speed_m_s, config.max_speed_m_s);
+        robot.omega = ((next_robot.theta - prev_robot.theta) / dt).clamp(
+            -config.max_angular_speed_rad_s,
+            config.max_angular_speed_rad_s,
+        );
         let prev_vx = prev_robot.vx;
         let prev_vy = prev_robot.vy;
         robot.ax = ((robot.vx - prev_vx) / (dt / 2.0))
@@ -804,7 +871,11 @@ fn estimate_sample_rate_hz(frames: &[CleanFrame]) -> f32 {
         return 0.0;
     }
     let mean_delta = deltas.iter().sum::<f32>() / deltas.len() as f32;
-    if mean_delta <= 0.0 { 0.0 } else { 1.0 / mean_delta }
+    if mean_delta <= 0.0 {
+        0.0
+    } else {
+        1.0 / mean_delta
+    }
 }
 
 fn parse_year_from_name(name: &str) -> Option<u16> {

@@ -2,10 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, ValueEnum};
 use globwalk::GlobWalkerBuilder;
-use zr_core::archive::{write_dataset, GameShard};
+use zr_core::archive::{GameShard, write_dataset};
 use zr_core::config::{PipelineConfig, TeamSelector};
 use zr_core::pipeline::{auto_preprocess_logs_with_splits, summarize_games_by_phase};
 use zr_core::raw::load_raw_game;
@@ -157,10 +157,7 @@ fn main() -> Result<()> {
     eprintln!("  games loaded      : {}", outputs.len());
     eprintln!("  load failures     : {}", load_failures.len());
     eprintln!("  sequences kept    : {total_sequences}");
-    eprintln!(
-        "  training samples  : {}",
-        manifest.total_samples
-    );
+    eprintln!("  training samples  : {}", manifest.total_samples);
     eprintln!("  shards written    : {}", manifest.shard_paths.len());
     eprintln!("  output directory  : {}", cli.output_dir.display());
     eprintln!("  wall-clock time   : {:.2}s", total_time.as_secs_f64());
@@ -218,8 +215,7 @@ fn main() -> Result<()> {
     );
     eprintln!(
         "    position_smoothing          : {} (window={})",
-        config.auto_clean.enable_position_smoothing,
-        config.auto_clean.smoothing_window
+        config.auto_clean.enable_position_smoothing, config.auto_clean.smoothing_window
     );
     eprintln!(
         "    drop_duplicate_timestamps   : {}",
@@ -228,21 +224,14 @@ fn main() -> Result<()> {
 
     // Also write the config used to the output directory for reproducibility.
     let used_config_path = cli.output_dir.join("pipeline-config.json");
-    fs::write(
-        &used_config_path,
-        serde_json::to_string_pretty(&config)?,
-    )
-    .with_context(|| {
+    fs::write(&used_config_path, serde_json::to_string_pretty(&config)?).with_context(|| {
         format!(
             "failed to write used config to {}",
             used_config_path.display()
         )
     })?;
     eprintln!();
-    eprintln!(
-        "  config snapshot   : {}",
-        used_config_path.display()
-    );
+    eprintln!("  config snapshot   : {}", used_config_path.display());
 
     Ok(())
 }

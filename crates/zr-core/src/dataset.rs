@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::archive::{
-    load_manifest, load_shard, load_split_bundle, resolve_shard_paths, resolve_split_bundle_path,
-    GameShard, SplitBundle,
+    GameShard, SplitBundle, load_manifest, load_shard, load_split_bundle, resolve_shard_paths,
+    resolve_split_bundle_path,
 };
 use crate::config::PipelineConfig;
-use crate::pipeline::{preprocess_log, preprocess_logs_with_splits, PipelineOutput};
+use crate::pipeline::{PipelineOutput, preprocess_log, preprocess_logs_with_splits};
 use crate::raw::load_raw_game;
 use crate::review::ReviewStore;
 use crate::types::TrainingSample;
@@ -74,7 +74,7 @@ impl Iterator for ArchivedDatasetIter {
                 Err(err) => {
                     return Some(Err(
                         err.context(format!("failed to load shard {}", path.display()))
-                    ))
+                    ));
                 }
             }
         }

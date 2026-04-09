@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use globwalk::GlobWalkerBuilder;
-use zr_core::archive::{write_dataset, GameShard};
+use zr_core::archive::{GameShard, write_dataset};
 use zr_core::config::{PipelineConfig, TeamSelector};
 use zr_core::pipeline::{audit_log, summarize_games_by_phase};
 use zr_core::review::load_review_store;

@@ -1,10 +1,10 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::panic::{catch_unwind, resume_unwind, take_hook, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind, take_hook};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use rkyv::{from_bytes, Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use anyhow::{Context, Result, bail};
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize, from_bytes};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{GameMetadata, MatchPhase, ReviewSequenceSummary, TrainingSample};

@@ -17,9 +17,9 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
+use zr_core::PipelineOutput;
 use zr_core::config::{PipelineConfig, TeamSelector};
 use zr_core::pipeline::preprocess_review_log;
-use zr_core::PipelineOutput;
 use zr_core::review::{ReviewStore, ReviewVerdict, load_review_store, save_review_store};
 use zr_core::{
     ReviewGamePayload, ReviewSequenceQueryPayload, TeamColor, build_review_payload,
@@ -29,7 +29,10 @@ use zr_core::{
 static FRONTEND_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../apps/zr-review-web/dist");
 
 #[derive(Parser)]
-#[command(name = "zr-review", about = "Local review workstation for Zombie Resurrection")]
+#[command(
+    name = "zr-review",
+    about = "Local review workstation for Zombie Resurrection"
+)]
 struct Cli {
     #[arg(long)]
     logs_dir: PathBuf,
@@ -151,7 +154,10 @@ async fn list_games(State(state): State<AppState>) -> Result<Json<Vec<GameListIt
     for entry in std::fs::read_dir(&state.logs_dir).map_err(AppError::from)? {
         let entry = entry.map_err(AppError::from)?;
         let path = entry.path();
-        let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
         if name.ends_with(".log") || name.ends_with(".log.gz") {
             items.push(GameListItem {
                 id: name.replace('.', "_"),
@@ -210,7 +216,10 @@ async fn update_review(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-fn load_or_build_cached_game(state: &AppState, path: &PathBuf) -> Result<Arc<CachedGame>, AppError> {
+fn load_or_build_cached_game(
+    state: &AppState,
+    path: &PathBuf,
+) -> Result<Arc<CachedGame>, AppError> {
     if !path.exists() {
         return Err(AppError::msg("game path does not exist"));
     }
@@ -233,7 +242,8 @@ fn load_or_build_cached_game(state: &AppState, path: &PathBuf) -> Result<Arc<Cac
         .lock()
         .map_err(|_| AppError::msg("review store lock poisoned"))?
         .clone();
-    let (output, raw_frames) = preprocess_review_log(path, &state.config).map_err(AppError::from)?;
+    let (output, raw_frames) =
+        preprocess_review_log(path, &state.config).map_err(AppError::from)?;
     let game = build_review_payload(&output, &raw_frames, &review);
     let cached = Arc::new(CachedGame {
         game,
@@ -276,7 +286,9 @@ async fn serve_frontend(path: Option<axum::extract::Path<String>>) -> Response {
         Some(file) => {
             let mime = content_type_for(file.path().extension().and_then(|value| value.to_str()));
             let mut response = Response::new(Body::from(file.contents().to_vec()));
-            response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+            response
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
             response
         }
         None => (StatusCode::NOT_FOUND, "missing embedded frontend").into_response(),
@@ -303,19 +315,25 @@ struct AppError {
 
 impl AppError {
     fn msg(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
 impl From<anyhow::Error> for AppError {
     fn from(value: anyhow::Error) -> Self {
-        Self { message: value.to_string() }
+        Self {
+            message: value.to_string(),
+        }
     }
 }
 
 impl From<std::io::Error> for AppError {
     fn from(value: std::io::Error) -> Self {
-        Self { message: value.to_string() }
+        Self {
+            message: value.to_string(),
+        }
     }
 }
 
